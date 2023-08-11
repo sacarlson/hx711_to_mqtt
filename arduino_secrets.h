@@ -6,5 +6,8 @@
 #define SECRET_BROKER_USER "buser"
 #define SECRET_BROKER_PASS "bpass"
 #define SECRET_BROKER_TOPIC "water/level"
-#define ZERO_REF 1061657.0
-#define CAL_FACTOR 50093.0
+// these values now set in wifi credentials mode
+//#define ZERO_REFA 1061657.0
+//#define CAL_FACTORA 50093.0
+//#define ZERO_REFB 1061657.0
+//#define CAL_FACTORB 50093.0
