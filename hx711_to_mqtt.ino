@@ -8,14 +8,17 @@
 //const int LOADCELL_DOUT_PIN = 2;
 //const int LOADCELL_SCK_PIN = 3;
 // to use NodeMCU kit at D1 for SCK  and D2 for DOUT
-const int LOADCELL_DOUT_PIN = 4;  // D2 nodeMCU GPIO4
-const int LOADCELL_SCK_PIN = 5;   // D1 nodeMCU GPIO5
+const int LOADCELL_DOUT_PINB = 4;  // D2 nodeMCU GPIO4
+const int LOADCELL_SCK_PINB = 5;   // D1 nodeMCU GPIO5
+const int LOADCELL_DOUT_PIN = 14;  // D5 nodeMCU GPIO14
+const int LOADCELL_SCK_PIN = 12;   // D6 nodeMCU GPIO12
 
 // calibration data
 //const long ZERO_REF = 743857;
 //const long CAL_FACTOR = 50093;
 
-HX711 scale;
+HX711 scale_a;
+HX711 scale_b;
 
 #include <ArduinoMqttClient.h>
 #if defined(ARDUINO_SAMD_MKRWIFI1010) || defined(ARDUINO_SAMD_NANO_33_IOT) || defined(ARDUINO_AVR_UNO_WIFI_REV2)
@@ -29,9 +32,9 @@ HX711 scale;
 #endif
 #define LED 2            // Led in NodeMCU at pin GPIO16 (D0).
 const int analogInPin = A0;
-float adcValue = 0;
+int adcValue = 0;
 float voltage = 0;
-float depth_cm = 0;
+//float depth_cm = 0;
 
 #include "arduino_secrets.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
@@ -45,7 +48,10 @@ String st;
 String content;
 String esid;
 String epass = "";
-String ecode = "";
+String ezero_refa = "";
+String ecal_factora = "";
+String ezero_refb = "";
+String ecal_factorb = "";
 //Function Decalration
 void ReadEPROM(void);
 bool testWifi(void);
@@ -67,7 +73,7 @@ const long interval = 5000;
 unsigned long previousMillis = 0;
 
 long count = 0;
-long reading = 0;
+//long reading = 0;
 
 void setup() {
   pinMode(LED, OUTPUT); 
@@ -80,8 +86,9 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
   ReadEPROM();
-  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
 
+  scale_a.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale_b.begin(LOADCELL_DOUT_PINB, LOADCELL_SCK_PINB);
    // attempt to connect to WiFi network:
   Serial.print("Attempting to connect to WPA SSID: ");
   Serial.println(esid.c_str());
@@ -130,28 +137,43 @@ void setup() {
 }
 
 void loop() {
+  float depth_cm_B = 0;
+  long readingB = 0;
+  float depth_cm_A = 0;
+  long readingA = 0;
+  float ZERO_REFA = atof(ezero_refa.c_str());
+  float ZERO_REFB = atof(ezero_refb.c_str());
+  float CAL_FACTORA = atof(ecal_factora.c_str());
+  float CAL_FACTORB = atof(ecal_factorb.c_str());
 
-  if (scale.is_ready()) {
-    reading = scale.read();
-    //Serial.print("HX711 reading: ");
-    //Serial.println(reading);
-    //const float ZERO_REF = 743857.0;
-    //const float ZERO_REF = 1061657.0;
-    //const float CAL_FACTOR = 50093.0;
-    depth_cm = (reading + ZERO_REF)/CAL_FACTOR;
-    //Serial.println("depth_cm");
-    //Serial.println(depth_cm);
+  if (scale_a.is_ready()) {
+    readingA = scale_a.read();
+    //Serial.print("HX711 readingA: ");
+    //Serial.println(readingA);
+    depth_cm_A = (readingA + ZERO_REFA)/CAL_FACTORA;
   } else {
     //Serial.println("HX711 not found.");
   }
 
-  //flash_start_hotspot();
+  if (scale_b.is_ready()) {
+    readingB = scale_b.read();
+    //Serial.print("HX711 readingB: ");
+    //Serial.println(readingB);
+    depth_cm_B = (readingB + ZERO_REFB)/CAL_FACTORB;
+  } else {
+    //Serial.println("HX711 not found.");
+  }
+
+
+  flash_start_hotspot();
   delay(1000);
   adcValue = analogRead(analogInPin);
   voltage = (adcValue *  0.069);  // calibration .06451 with 220k and 10k voltage spliter to A0
   //voltage = (adcValue * 1.00);
   //Serial.print("voltage, ");
   //Serial.println(voltage);
+  //Serial.print("adcValue, ");
+  //Serial.println(adcValue);
  
   // to avoid having delays in loop, we'll use the strategy from BlinkWithoutDelay
   // see: File -> Examples -> 02.Digital -> BlinkWithoutDelay for more info
@@ -164,18 +186,28 @@ void loop() {
     // call poll() regularly to allow the library to send MQTT keep alives which
     // avoids being disconnected by the broker
     mqttClient.poll();
+
+    Serial.println("ezero_refa");
+    Serial.println(ezero_refa);
+    Serial.println(ZERO_REFA);
+    Serial.println(ZERO_REFB);
+    Serial.println(CAL_FACTORA);
+    Serial.println(CAL_FACTORB);
     Serial.print("Sending message to topic: ");
     Serial.println(topic);
     Serial.print("sent ");
     Serial.println(count);
-    Serial.println(reading);
+    Serial.println(readingA);
     Serial.print("voltage, ");
     Serial.println(voltage);
     long rssi = WiFi.RSSI();
     Serial.print("RSSI: ");
     Serial.println(rssi);
-    
-    reading = reading * -1;
+    Serial.println("depth_cm_A");
+    Serial.println(depth_cm_A);
+     Serial.println("depth_cm_B");
+    Serial.println(depth_cm_B);
+    readingA = readingA * -1;
     // send message, the Print interface can be used to set the message contents
     mqttClient.beginMessage(topic);
     mqttClient.print(count);
@@ -184,9 +216,11 @@ void loop() {
     mqttClient.print(",");
     mqttClient.print(rssi);
     mqttClient.print(",");
-    mqttClient.print(reading);
+    mqttClient.print(readingA);
     mqttClient.print(",");
-    mqttClient.print(depth_cm);
+    mqttClient.print(depth_cm_A);
+     mqttClient.print(",");
+    mqttClient.print(depth_cm_B);
     mqttClient.endMessage();
 
     Serial.println();
@@ -205,24 +239,24 @@ void loop() {
     count++;
      
   }
-
-  if (voltage > 5.3) { //if voltage is bellow about 5v then we must be using usb to power it
-    if (voltage < 7.30) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-      Serial.print("power voltage is below 7.30 (1%), will go into mode 3 power save sleep 24 hour");
+  if (0){
+  //if (voltage > 5.3) { //if voltage is bellow about 5v then we must be using usb to power it
+    if (voltage < 6.1) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
+      Serial.print("power voltage is below 6.1 (1%), will go into mode 3 power save sleep 24 hour");
       //ESP.deepSleep(60e6);  // 60 sec    //ESP.deepSleep(600e6); //10 minutes
       //ESP.deepSleep(3600e6); // 1 hour   
       ESP.deepSleep(86400e6); //24 hours
     }
 
-    if (voltage < 7.51) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-     Serial.print("power voltage is below 7.51 (25%), will go into mode 2 power save sleep 1 hour");
+    if (voltage < 6.25) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
+     Serial.print("power voltage is below 6.25 (25%), will go into mode 2 power save sleep 1 hour");
      //ESP.deepSleep(600e6); //10 minutes
       ESP.deepSleep(3600e6); // 1 hour
       //ESP.deepSleep(60e6);  // 60 sec
     }
     //if (voltage < 4.31) {  // use this if hooked to usb for power
-    if (voltage < 7.86) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-      Serial.print("power voltage is below 7.86 (50%), will go into mode 1 power save sleep 1 minutes");
+    if (voltage < 6.35) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
+      Serial.print("power voltage is below 6.35 (50%), will go into mode 1 power save sleep 1 minutes");
       //ESP.deepSleep(600e6); //10 minutes
       //ESP.deepSleep(3600e6); // 1 hour
       ESP.deepSleep(60e6);  // 60 sec
@@ -264,14 +298,41 @@ void ReadEPROM(void){
   Serial.println("PASS: ");
   Serial.println(epass);
 
-  Serial.println("Reading EEPROM code");
+  Serial.println("Reading EEPROM zero_refa");
   //String ecode = "";
   for (int i = 96; i < 128; ++i)
   {
-    ecode += char(EEPROM.read(i));
+    ezero_refa += char(EEPROM.read(i));
   }
-  Serial.println("CODE: ");
-  Serial.println(ecode);
+  Serial.println("zero_refa: ");
+  Serial.println(ezero_refa);
+
+  Serial.println("Reading EEPROM cal_factora");
+  //String ecode = "";
+  for (int i = 128; i < 160; ++i)
+  {
+    ecal_factora += char(EEPROM.read(i));
+  }
+  Serial.println("ecal_factora: ");
+  Serial.println(ecal_factora);
+
+  Serial.println("Reading EEPROM ezero_refb");
+  //String ecode = "";
+  for (int i = 160; i < 192; ++i)
+  {
+    ezero_refb += char(EEPROM.read(i));
+  }
+  Serial.println("ezero_refb: ");
+  Serial.println(ezero_refb);
+
+  Serial.println("Reading EEPROM cal_factorb");
+  //String ecode = "";
+  for (int i = 192; i < 224; ++i)
+  {
+    ecal_factorb += char(EEPROM.read(i));
+  }
+  Serial.println("ecal_factorb: ");
+  Serial.println(ecal_factorb);
 }
 
 void turn_on_hotspot(){
@@ -383,7 +444,7 @@ void createWebServer()
       content += ipStr;
       content += "<p>";
       content += st;
-      content += "</p><form method='get' action='setting'><label>SSID: </label><input name='ssid' length=32><br><label>PASS: </label><input name='pass' length=64> <br><label>CODE: </label><input name='code' length=32> <input type='submit'></form>";
+      content += "</p><form method='get' action='setting'><label>SSID: </label><input name='ssid' length=32><br><label>PASS: </label><input name='pass' length=64> <br><label>ZERO_REFA: </label><input name='zero_refa' value='1061657.0' length=32> <br><label>CAL_FACTORA: </label><input name='cal_factora' value='50093.0' length=32> <br><label>ZERO_REFB: </label><input name='zero_refb' value='1061657.0' length=32> <br><label>CAL_FACTORB: </label><input name='cal_factorb' value='50093.0' length=32> <input type='submit'></form>";
       content += "</html>";
       server.send(200, "text/html", content);
     });
@@ -397,10 +458,13 @@ void createWebServer()
     server.on("/setting", []() {
       String qsid = server.arg("ssid");
       String qpass = server.arg("pass");
-      String qcode = server.arg("code");
+      String qzero_refa = server.arg("zero_refa");
+      String qcal_factora = server.arg("cal_factora");
+      String qzero_refb = server.arg("zero_refb");
+      String qcal_factorb = server.arg("cal_factorb");
       if (qsid.length() > 0 && qpass.length() > 0) {
         Serial.println("clearing eeprom");
-        for (int i = 0; i < 128; ++i) {
+        for (int i = 0; i < 256; ++i) {
           EEPROM.write(i, 0);
         }
         Serial.println(qsid);
@@ -422,13 +486,38 @@ void createWebServer()
           Serial.println(qpass[i]);
         }
 
-        Serial.println("writing eeprom code:");
-        for (int i = 0; i < qcode.length(); ++i)
+        Serial.println("writing eeprom qzero_refa:");
+        for (int i = 0; i < qzero_refa.length(); ++i)
         {
-          EEPROM.write(96 + i, qcode[i]);
+          EEPROM.write(96 + i, qzero_refa[i]);
           Serial.print("Wrote: ");
-          Serial.println(qcode[i]);
+          Serial.println(qzero_refa[i]);
         }
+
+        Serial.println("writing eeprom qcal_factora:");
+        for (int i = 0; i < qcal_factora.length(); ++i)
+        {
+          EEPROM.write(128 + i, qcal_factora[i]);
+          Serial.print("Wrote: ");
+          Serial.println(qcal_factora[i]);
+        }
+
+        Serial.println("writing eeprom qzero_refb:");
+        for (int i = 0; i < qzero_refb.length(); ++i)
+        {
+          EEPROM.write(160 + i, qzero_refb[i]);
+          Serial.print("Wrote: ");
+          Serial.println(qzero_refb[i]);
+        }
+
+        Serial.println("writing eeprom qcal_factorb:");
+        for (int i = 0; i < qcal_factorb.length(); ++i)
+        {
+          EEPROM.write(192 + i, qcal_factorb[i]);
+          Serial.print("Wrote: ");
+          Serial.println(qcal_factorb[i]);
+        }
+
 
         EEPROM.commit();
         content = "{\"Success\":\"saved to eeprom... reset to boot into new wifi\"}";
