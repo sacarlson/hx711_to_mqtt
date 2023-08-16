@@ -5,13 +5,11 @@
 #include <ESP8266WebServer.h>
 
 // HX711 circuit wiring
-//const int LOADCELL_DOUT_PIN = 2;
-//const int LOADCELL_SCK_PIN = 3;
 // to use NodeMCU kit at D1 for SCK  and D2 for DOUT
 const int LOADCELL_DOUT_PINB = 4;  // D2 nodeMCU GPIO4
 const int LOADCELL_SCK_PINB = 5;   // D1 nodeMCU GPIO5
-const int LOADCELL_DOUT_PIN = 14;  // D5 nodeMCU GPIO14
-const int LOADCELL_SCK_PIN = 12;   // D6 nodeMCU GPIO12
+const int LOADCELL_DOUT_PINA = 14;  // D5 nodeMCU GPIO14
+const int LOADCELL_SCK_PINA= 12;   // D6 nodeMCU GPIO12
 
 // calibration data
 //const long ZERO_REF = 743857;
@@ -32,9 +30,7 @@ HX711 scale_b;
 #endif
 #define LED 2            // Led in NodeMCU at pin GPIO16 (D0).
 const int analogInPin = A0;
-int adcValue = 0;
-float voltage = 0;
-//float depth_cm = 0;
+
 
 #include "arduino_secrets.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
@@ -52,6 +48,11 @@ String ezero_refa = "";
 String ecal_factora = "";
 String ezero_refb = "";
 String ecal_factorb = "";
+float ZERO_REFA = UZERO_REFA;
+float ZERO_REFB = UZERO_REFB;
+float CAL_FACTORA = UCAL_FACTORA;
+float CAL_FACTORB = UCAL_FACTORB;
+
 //Function Decalration
 void ReadEPROM(void);
 bool testWifi(void);
@@ -73,7 +74,6 @@ const long interval = 5000;
 unsigned long previousMillis = 0;
 
 long count = 0;
-//long reading = 0;
 
 void setup() {
   pinMode(LED, OUTPUT); 
@@ -85,23 +85,37 @@ void setup() {
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
-  ReadEPROM();
 
-  scale_a.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  ReadEPROM();
+  if (ZERO_REFA == 0){
+    ZERO_REFA = atof(ezero_refa.c_str());
+  }
+  if (ZERO_REFB == 0){
+    ZERO_REFB = atof(ezero_refb.c_str());
+  }
+  if (CAL_FACTORA == 0){
+    CAL_FACTORA = atof(ecal_factora.c_str());
+  }
+  if (CAL_FACTORB == 0){
+  CAL_FACTORB = atof(ecal_factorb.c_str());
+  }
+
+  scale_a.begin(LOADCELL_DOUT_PINA, LOADCELL_SCK_PINA);
   scale_b.begin(LOADCELL_DOUT_PINB, LOADCELL_SCK_PINB);
    // attempt to connect to WiFi network:
-  Serial.print("Attempting to connect to WPA SSID: ");
+  Serial.println("Attempting to connect to WPA SSID: ");
   Serial.println(esid.c_str());
   Serial.println(epass.c_str());
-  //while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-  //while (WiFi.begin(esid.c_str(), epass.c_str())) {
-    // failed, retry
-    //Serial.print(".");
-   // flash_start_hotspot();
-    //delay(10000);
-  //}
-
-  WiFi.begin(esid.c_str(), epass.c_str());
+  if (String(ssid).length()>1){
+    Serial.println("using arduino_secrets wifi values");
+    Serial.print("ssid: ");
+    Serial.println(ssid);
+    Serial.print("pass: ");
+    Serial.println(pass);
+    WiFi.begin(ssid, pass);
+  } else {
+    WiFi.begin(esid.c_str(), epass.c_str());
+  }
   if (testWifi())
   {
     Serial.println("Succesfully Connected!!!");
@@ -128,8 +142,8 @@ void setup() {
   if (!mqttClient.connect(broker, port)) {
     Serial.print("MQTT connection failed! Error code = ");
     Serial.println(mqttClient.connectError());
-
-    while (1);
+    Serial.println("will restart ESP: ");
+    ESP.restart();
   }
 
   Serial.println("You're connected to the MQTT broker!");
@@ -137,22 +151,20 @@ void setup() {
 }
 
 void loop() {
+  int adcValue = 0;
+  float voltage = 0;
   float depth_cm_B = 0;
-  long readingB = 0;
+  long readingB = 1;
   float depth_cm_A = 0;
-  long readingA = 0;
-  float ZERO_REFA = atof(ezero_refa.c_str());
-  float ZERO_REFB = atof(ezero_refb.c_str());
-  float CAL_FACTORA = atof(ecal_factora.c_str());
-  float CAL_FACTORB = atof(ecal_factorb.c_str());
-
+  long readingA = 1;
+  
   if (scale_a.is_ready()) {
     readingA = scale_a.read();
     //Serial.print("HX711 readingA: ");
     //Serial.println(readingA);
     depth_cm_A = (readingA + ZERO_REFA)/CAL_FACTORA;
   } else {
-    //Serial.println("HX711 not found.");
+    //Serial.println("HX711 A not found.");
   }
 
   if (scale_b.is_ready()) {
@@ -161,14 +173,14 @@ void loop() {
     //Serial.println(readingB);
     depth_cm_B = (readingB + ZERO_REFB)/CAL_FACTORB;
   } else {
-    //Serial.println("HX711 not found.");
+    Serial.println("HX711 B not found.");
   }
 
 
   flash_start_hotspot();
   delay(1000);
   adcValue = analogRead(analogInPin);
-  voltage = (adcValue *  0.069);  // calibration .06451 with 220k and 10k voltage spliter to A0
+  voltage = (adcValue * A2D_VOLT_CALFACTOR);  // calibration .069 with 220k and 10k voltage spliter to A0
   //voltage = (adcValue * 1.00);
   //Serial.print("voltage, ");
   //Serial.println(voltage);
@@ -186,18 +198,21 @@ void loop() {
     // call poll() regularly to allow the library to send MQTT keep alives which
     // avoids being disconnected by the broker
     mqttClient.poll();
-
-    Serial.println("ezero_refa");
-    Serial.println(ezero_refa);
-    Serial.println(ZERO_REFA);
-    Serial.println(ZERO_REFB);
-    Serial.println(CAL_FACTORA);
-    Serial.println(CAL_FACTORB);
+    
+    //Serial.println("ezero_refa");
+    //Serial.println(ezero_refa);
+    //Serial.println(ZERO_REFA);
+    //Serial.println(ZERO_REFB);
+    //Serial.println(CAL_FACTORA);
+    //Serial.println(CAL_FACTORB);
     Serial.print("Sending message to topic: ");
     Serial.println(topic);
-    Serial.print("sent ");
+    Serial.print("count ");
     Serial.println(count);
+    Serial.print(" reading A: ");
     Serial.println(readingA);
+    Serial.print(" reading B: ");
+    Serial.println(readingB);
     Serial.print("voltage, ");
     Serial.println(voltage);
     long rssi = WiFi.RSSI();
@@ -205,9 +220,9 @@ void loop() {
     Serial.println(rssi);
     Serial.println("depth_cm_A");
     Serial.println(depth_cm_A);
-     Serial.println("depth_cm_B");
+    Serial.println("depth_cm_B");
     Serial.println(depth_cm_B);
-    readingA = readingA * -1;
+    //readingA = readingA * -1;
     // send message, the Print interface can be used to set the message contents
     mqttClient.beginMessage(topic);
     mqttClient.print(count);
@@ -218,8 +233,10 @@ void loop() {
     mqttClient.print(",");
     mqttClient.print(readingA);
     mqttClient.print(",");
+    mqttClient.print(readingB);
+    mqttClient.print(",");
     mqttClient.print(depth_cm_A);
-     mqttClient.print(",");
+    mqttClient.print(",");
     mqttClient.print(depth_cm_B);
     mqttClient.endMessage();
 
@@ -230,38 +247,49 @@ void loop() {
       delay(1000);
       Serial.println("count > 4");
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("wifi.status OK");
+        //Serial.println("wifi.status OK");
       } else {
         Serial.println("wifi.status failed will reset esp ");
+        //ESP.restart();
+      } 
+      //Serial.print("mqttClient.connected(): ");
+      //Serial.println(mqttClient.connected());
+      if (!mqttClient.connected()){
+        Serial.println("mqttClient failed to connect will resart ESP");
         ESP.restart();
-      }  
-    }
-    count++;
-     
-  }
-  if (0){
-  //if (voltage > 5.3) { //if voltage is bellow about 5v then we must be using usb to power it
-    if (voltage < 6.1) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-      Serial.print("power voltage is below 6.1 (1%), will go into mode 3 power save sleep 24 hour");
-      //ESP.deepSleep(60e6);  // 60 sec    //ESP.deepSleep(600e6); //10 minutes
-      //ESP.deepSleep(3600e6); // 1 hour   
-      ESP.deepSleep(86400e6); //24 hours
+      } 
     }
 
-    if (voltage < 6.25) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-     Serial.print("power voltage is below 6.25 (25%), will go into mode 2 power save sleep 1 hour");
-     //ESP.deepSleep(600e6); //10 minutes
-      ESP.deepSleep(3600e6); // 1 hour
-      //ESP.deepSleep(60e6);  // 60 sec
+    if (ENABLE_POWER_SAVE && (voltage > 5.3)){
+      Serial.println("power save enabled: ");
+      //if (voltage > 5.3) { //if voltage is bellow about 5v then we must be using usb to power it
+      if (voltage < VOLTAGE_PS_MODE3) {  // two lipo low battery voltage is 3.8 x 2 = 7.6, lifepo4 is 2.5v - 3.6v float 3.2v low x2 = 5.1
+        Serial.print("power voltage is below 1%, will go into mode 3 power save sleep 24 hour");
+        //ESP.deepSleep(60e6);  // 60 sec    //ESP.deepSleep(600e6); //10 minutes
+        //ESP.deepSleep(3600e6); // 1 hour   
+        ESP.deepSleep(86400e6); //24 hours
+      } 
+
+      if (voltage < VOLTAGE_PS_MODE2) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
+        Serial.print("power voltage is below 25%, will go into mode 2 power save sleep 1 hour");
+        //ESP.deepSleep(600e6); //10 minutes
+        ESP.deepSleep(3600e6); // 1 hour
+        //ESP.deepSleep(60e6);  // 60 sec
+      }
+      //if (voltage < 4.31) {  // use this if hooked to usb for power
+      if (voltage < VOLTAGE_PS_MODE1) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
+        Serial.print("power voltage is below 50%, will go into mode 1 power save sleep 1 minutes");
+        //ESP.deepSleep(600e6); //10 minutes
+        //ESP.deepSleep(3600e6); // 1 hour
+        ESP.deepSleep(60e6);  // 60 sec
+      }
+    } else {
+      Serial.println("power save Disabled");
     }
-    //if (voltage < 4.31) {  // use this if hooked to usb for power
-    if (voltage < 6.35) {  // two lipo low battery voltage is 3.8 x 2 = 7.6
-      Serial.print("power voltage is below 6.35 (50%), will go into mode 1 power save sleep 1 minutes");
-      //ESP.deepSleep(600e6); //10 minutes
-      //ESP.deepSleep(3600e6); // 1 hour
-      ESP.deepSleep(60e6);  // 60 sec
-    }
- }
+
+    count++;
+  }
+  
 
   digitalWrite(LED,HIGH);
        
@@ -297,6 +325,11 @@ void ReadEPROM(void){
   }
   Serial.println("PASS: ");
   Serial.println(epass);
+
+  Serial.println("length esid: ");
+  Serial.println(esid.length());
+  Serial.println("length pass: ");
+  Serial.println(epass.length());
 
   Serial.println("Reading EEPROM zero_refa");
   //String ecode = "";
